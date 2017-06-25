@@ -1,7 +1,7 @@
 ---
 title: "Practical machine learning course project"
 author: "Maria Riala"
-date: "6/18/2017"
+date: "6/25/2017"
 output: html_document
 ---
 
@@ -9,22 +9,87 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+## Executive summary
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+The goal of this project was to predict how people performed bicep curls by using data from various sensors. After cleaning the data, a tree-based model seemed like the most sensible choice. A basic classification tree performed very poorly, but a Random forests model achieved a higher than 0.99 accuracy. The same level of accuracy applied also on the testing sample, meaning that the model can be used to predict how people perform this move. The estimated out-of-sample error is around 0.005. The Random forest model gives an out-of-bag error of 0.57 %.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+## Report
+The training data consists of 19,622 entries. It shows how individuals performed weight-lifting exercises, in variable "classe" (five categories). The goal of this report is to use the other variables to predict factor variable "classe".
 
-```{r cars}
-summary(cars)
+```{r, echo=FALSE}
+dataTR = read.csv("/Users/maria/Documents/Git Course/practicalmachinelearning/pml-training.csv", sep=",")
+summary(dataTR$classe)
+```
+First, I split the training data to training and test sets. The training set will be used for model building, and the test set will be used for estimating the out-of-sample error.
+
+```{r, echo=TRUE}
+library(caret)
+set.seed(6284)
+inTrain = createDataPartition(dataTR$classe, p = 0.80)[[1]]
+
+training = dataTR[ inTrain,]
+
+testing = dataTR[-inTrain,]
 ```
 
-## Including Plots
+After splitting the data, the first step of building a machine learning model is looking at the data. What variables are there and what do they look like? The dataset consists of 160 variables, including the "classe". To understand the data better, I looked for further information about the dataset from the website http://groupware.les.inf.puc-rio.br/har (cited in the assignment). This shows that category A of "classe" is the correct form of doing the bicep curl, and the other four are typical mistakes. Otherwise, there are not that many explanations of what the different variables actually stand for. Ideally, I would like to have a lot more knowledge of the contents of the data before trying to build a model, but it's not available for this case. Thus, I looked at the list of variable names. There were some that didn't seem useful, and reading the Coursera course forum confirmed this. Thus, I decided to remove these variables from the training data to reduce the risk of them influencing the model.
 
-Testing how this works...
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r, echo=TRUE}
+library(tidyverse)
+trainingNoUseless <- training %>% select(-ind, -user_name, -raw_timestamp_part_1, -raw_timestamp_part_2, -num_window, -cvtd_timestamp, -new_window)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+Looking further at the data, I noticed that a lot of the variables are summaries for one test person. It doesn't make sense to use these for the model, as they are only available for some rows, so I removed those from the training data too.
+
+```{r, echo=TRUE}
+trainingSmall <- trainingNoUseless %>% select(roll_belt, pitch_belt, yaw_belt, total_accel_belt, gyros_belt_x, gyros_belt_y, gyros_belt_z, accel_belt_x, accel_belt_y, accel_belt_z, magnet_belt_x, magnet_belt_y, magnet_belt_z, roll_arm, pitch_arm, yaw_arm, total_accel_arm, gyros_arm_x, gyros_arm_y, gyros_arm_z, accel_arm_x, accel_arm_y, accel_arm_z, magnet_arm_x, magnet_arm_y, magnet_arm_z, roll_dumbbell, pitch_dumbbell, yaw_dumbbell, total_accel_dumbbell, gyros_dumbbell_x, gyros_dumbbell_y, gyros_dumbbell_z, accel_dumbbell_x, accel_dumbbell_y, accel_dumbbell_z, magnet_dumbbell_x, magnet_dumbbell_y, magnet_dumbbell_z, roll_forearm, pitch_forearm, yaw_forearm, total_accel_forearm, gyros_forearm_x, gyros_forearm_y, gyros_forearm_z, accel_forearm_x, accel_forearm_y, accel_forearm_z, magnet_forearm_x, magnet_forearm_y, magnet_forearm_z, classe)
+```
+
+## Model building
+
+The variable we're trying to predict is a factor variable. Thus, decision trees can work well and are quite easy to understand. I'm including the same trainControl method, which specifies cross-validation in 10 folds, for all models to facilitate comparisons between models. I'm also using the same seed for all the models. 
+
+```{r, echo=TRUE}
+t_control<-trainControl(method = "cv",
+                        number = 10)
+set.seed(136)
+modelTree1 <- train(classe ~ ., method = "rpart", data=trainingSmall, na.action =na.omit, trControl=t_control)
+modelTree1
+plot(modelTree1$finalModel, uniform = TRUE, main = "Classification tree")
+text(modelTree1$finalModel, use.n=TRUE, all=TRUE, cex=.8)
+```
+
+This doesn't look like a good model. The accuracy is only 0.504 and it doesn't predict category D at all.
+
+Sticking with tree type models, I will try Random forests next. They should be accurate, and seeing that this first version is anything but, a more accurate model is clearly called for. 
+
+```{r, echo=TRUE}
+set.seed(136)
+modelRF1 <- train(classe ~ ., method = "rf", data=trainingSmall, na.action =na.omit, prox=TRUE, trControl=t_control, allowParallel=TRUE)
+modelRF1
+print(modelRF1$finalModel)
+saveRDS(modelRF1, file="RandomForestModel.rds")
+```
+The random forest model took a long time to run, but the results are very good. The model accuracy is high, 0.994, and the OOB estimate of error rate is only 0.57 %. This means that less than 1 % of the cases in the testing data should be misclassified. 
+
+Which variables are the best in explaining the way the exercise is performed?
+
+```{r, echo=FALSE}
+varImp(modelRF1)
+```
+
+Looking at the list of top 20 variables, it seems that the measurements taken at the belt sensor are the most important, followed by magnet measurements from the dumbbell. Measurements from arm sensor seem to be the least important. Intuitively this makes sense, as when doing bicep curls, the arm generally does not move very much, even if the form is otherwise less than perfect.
+
+## Testing the model
+The Random forests model looks so good, that I'm going to test the model with the test data I set aside at the start
+
+```{r, echo=TRUE}
+pred <- predict(modelRF1, testing)
+testing$predRight <- pred == testing$classe
+confusionMatrix(testing$classe, pred)
+```
+The model does very well also on the test data. It gives accuracy of 0.995, so the expected out-of-sample error should be around 0.005. However, it is probably larger, as out-of-sample errors tend to be larger than those in the training data. 
+
+The model does the least well with explaining category C, and misclassifies some of C's as D's. When looking at the description of how the data was collected, this makes sense. C stands for only lifting the dumbbell halfway and D for only lowering it halfway, so it could be assumed that the measurements would be similar. 
+
+The Random forest model is able to predict very accurately how a person performed the bicep curl, and the measurements from belt and dumbbell sensors have the greatest influence on the prediction.
